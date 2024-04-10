@@ -1,0 +1,96 @@
+-- Client-side LocalScript
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+_G.ScriptEnabled = true -- Global toggle to control the script's functionality
+
+-- Drawing FOV Circle
+local fovCircle = Drawing.new("Circle")
+fovCircle.Thickness = 1
+fovCircle.NumSides = 100
+fovCircle.Radius = 90
+fovCircle.Filled = false
+fovCircle.Visible = _G.ScriptEnabled
+
+-- Update FOV Circle to follow cursor and change color
+game:GetService("RunService").RenderStepped:Connect(function()
+    if not _G.ScriptEnabled then
+        fovCircle.Visible = false
+        return
+    end
+
+    fovCircle.Visible = true
+    local mouseLocation = UserInputService:GetMouseLocation()
+    fovCircle.Position = Vector2.new(mouseLocation.X, mouseLocation.Y)
+    -- Rainbow color effect
+    local hue = tick() % 5 / 5
+    fovCircle.Color = Color3.fromHSV(hue, 1, 1)
+end)
+
+-- Function to check if a target is visible (no walls between the player and the target)
+function IsTargetVisible(targetCharacter)
+    if not _G.ScriptEnabled then return false end
+
+    local origin = Camera.CFrame.Position
+    local targetPosition = targetCharacter.PrimaryPart.Position
+    local direction = (targetPosition - origin).unit
+    local distance = (targetPosition - origin).magnitude
+    local ray = Ray.new(origin, direction * distance)
+    local hit = workspace:FindPartOnRayWithIgnoreList(ray, {LocalPlayer.Character, targetCharacter})
+    
+    -- If the ray does not hit anything or hits the target, the target is considered visible
+    return hit == nil or hit:IsDescendantOf(targetCharacter)
+end
+
+-- Function to find the closest player within the FOV that is also visible
+function FindTargetWithinFOV()
+    if not _G.ScriptEnabled then return nil end
+
+    local closestTarget = nil
+    local shortestDistance = fovCircle.Radius
+    local mousePosition = UserInputService:GetMouseLocation()
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player.Character.Humanoid.Health > 0 then
+            local character = player.Character
+            local screenPos, onScreen = Camera:WorldToViewportPoint(character.HumanoidRootPart.Position)
+            if onScreen and IsTargetVisible(character) then
+                local distanceToMouse = (Vector2.new(screenPos.X, screenPos.Y) - Vector2.new(mousePosition.X, mousePosition.Y)).Magnitude
+                if distanceToMouse < shortestDistance then
+                    closestTarget = player
+                    shortestDistance = distanceToMouse
+                end
+            end
+        end
+    end
+
+    return closestTarget
+end
+
+-- Shooting mechanism triggered by left mouse button
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+    if not _G.ScriptEnabled then return end
+
+    if not gameProcessedEvent and input.UserInputType == Enum.UserInputType.MouseButton1 then
+        local target = FindTargetWithinFOV()
+        if target and target.Character and target.Character:FindFirstChild("Head") then
+            local args = {
+                [1] = "shoot",
+                [2] = {
+                    [1] = {
+                        ["Normal"] = target.Character.Head.Position - Camera.CFrame.Position,
+                        ["Position"] = target.Character.Head.Position,
+                        ["Instance"] = target.Character.Head,
+                        ["Material"] = Enum.Material.Plastic,
+                        ["From"] = LocalPlayer.Character:FindFirstChild("Glock", true) and LocalPlayer.Character.Glock.Handle.FireExit.Position or Vector3.new(),
+                        ["Distance"] = (target.Character.Head.Position - Camera.CFrame.Position).magnitude
+                    }
+                }
+            }
+            ReplicatedStorage:WaitForChild("Events"):WaitForChild("RemoteEvent"):FireServer(unpack(args))
+        end
+    end
+end)
